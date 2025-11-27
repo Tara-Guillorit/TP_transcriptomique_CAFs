@@ -171,5 +171,3 @@ print(signature_scores)
 ```
 
 ## 6. Conclusion
-
-L'analyse scRNA-seq a permis d'identifier et de séparer **quatre sous-populations de CAF** hétérogènes. Cette hétérogénéité est cruciale pour comprendre leur rôle dans le microenvironnement tumoral.
