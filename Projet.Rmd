@@ -20,21 +20,22 @@ L'objectif principal est d'identifier et de caractériser **quatre (4) sous-popu
 
 Cette section initialise l'environnement R, charge les bibliothèques Seurat et future, et combine les matrices de comptes des trois échantillons.
 
-```{r loading_data, results='hide'}
+```{r loading_data, results='hide', message=FALSE, warning=FALSE}
 # Bibliothèques requises
 library(dplyr)
 library(Seurat)
 library(future)
+library(ggplot2)
 
 # 1. Configuration pour la parallélisation et la gestion mémoire
-plan("sequential")
-options(future.globals.maxSize = 10 * 1024^3) # 10 Go max
+plan(sequential)
+options(future.globals.maxSize = 10 * 1024**3) # 10 Go max
 
 # 2. Chargement des matrices de comptes
 # NOTE : Les fichiers doivent être situés dans le sous-dossier 'CAFs/'
-p5 <- read.csv("CAFS/GSM4805570_CountsMatrix_20G00953M_TN.txt.gz", sep="\t")
+p5 <- read.csv("CAFs/GSM4805570_CountsMatrix_20G00953M_TN.txt.gz", sep="\t")
 p4a <- read.csv("CAFs/GSM4805566_CountsMatrix_19G02977A_TN.txt.gz", sep="\t")
-p4b <- read.csv("CAFs/GSM4805568_CountsMatrix_19G02977BTN.txt.gz", sep="\t")
+p4b <- read.csv("CAFs/GSM4805568_CountsMatrix_19G02977B_TN.txt.gz", sep="\t")
 
 # 3. Combinaison et conversion en matrice
 caf.data <- data.matrix(cbind(p5, p4a, p4b))
@@ -48,8 +49,9 @@ symbols <- ens2symb[rownames(caf.data)]
 types <- ens2type[rownames(caf.data)]
 
 # 5. Filtrage des gènes
-# Critères : gènes codant pour des protéines, non-NA, et gestion des symboles dupliqués
-good <- types == "protein coding" & !is.na(symbols) & symbols %in% symbols[duplicated(symbols)]
+# Critères : gènes codant pour des protéines, non-NA, et sans symboles dupliqués
+good <- types == "protein_coding" & !is.na(symbols) & !duplicated(symbols)
+cat("Nombre de gènes après filtrage:", sum(good), "\n")
 
 symb <- symbols[good]
 caf.data <- caf.data[good,]
@@ -76,98 +78,154 @@ Les cellules sont filtrées pour éliminer celles avec un nombre trop élevé d'
 caf[["percent.mt"]] <- PercentageFeatureSet(caf, pattern = "^MT-")
 
 # 2. Visualisation des métriques de QC
-VlnPlot(caf, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0)
+VlnPlot(caf, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"))
 
 # 3. Filtrage selon les critères du TD
-caf <- subset(caf, subset = nCount_RNA < 50000 & percent.mt < 50)
+caf <- subset(
+  caf,
+  subset = nFeature_RNA > 1000 &
+    nCount_RNA < 50000 &
+    percent.mt < 50
+)
 
 print("Objet Seurat après QC:")
 caf
 ```
 
-## 3. Analyse, Clustering et Projection t-SNE (4 Clusters)
+## 3. Normalisation, PCA et Visualisation
 
-```{r clustering_tsne}
+Cette section effectue la normalisation des données, identifie les gènes hautement variables, réalise une PCA et visualise la variance expliquée.
+
+```{r normalization_pca}
 # 1. Normalisation et identification des gènes à haute variabilité
 caf <- NormalizeData(caf)
-caf <- FindVariableFeatures(caf, selection.method = "vst", nfeatures = 2000)
+caf <- FindVariableFeatures(caf)
 
 # 2. Mise à l'échelle
-all.genes <- rownames(caf)
-caf <- ScaleData(caf, features = all.genes)
+caf <- ScaleData(caf)
 
 # 3. PCA
-caf <- RunPCA(caf, features = VariableFeatures(object = caf))
+caf <- RunPCA(caf)
 
-# 4. Clustering
-caf <- FindNeighbors(caf, dims = 1:10)
-caf <- FindClusters(caf, resolution = 0.8) # 4 clusters
-
-# 5. t-SNE
-caf <- RunTSNE(caf, dims = 1:10)
-
-# 6. Visualisation
-DimPlot(caf, reduction = "tsne", label = TRUE, pt.size = 1) +
-  ggtitle("Projection t-SNE des 4 Sous-Populations de CAF")
+# 4. ElbowPlot classique (Seurat)
+ElbowPlot(caf)
 ```
 
-## 4. Caractérisation des Sous-Populations
+```{r elbow_plot_custom}
+# ElbowPlot personnalisé AVEC LIGNE
+# Extraire la variance expliquée
+var_explained <- caf[["pca"]]@stdev^2
+percent_var <- var_explained / sum(var_explained) * 100
 
-### 4.1 Marqueurs (DEG)
-
-```{r find_markers}
-caf.markers <- FindAllMarkers(
-    caf,
-    only.pos = TRUE,
-    min.pct = 0.25,
-    logfc.threshold = 0.25
+# Prendre les 30 premiers PCs
+df_elbow <- data.frame(
+  PC = 1:30,
+  Variance = percent_var[1:30]
 )
 
-top5_markers <- caf.markers %>%
+# Graphe avec points + ligne
+ggplot(df_elbow, aes(x = PC, y = Variance)) +
+  geom_point(size = 3) +
+  geom_line(size = 1) +
+  theme_minimal() +
+  labs(
+    title = "Elbow Plot (avec ligne)",
+    x = "Composante Principale",
+    y = "% variance expliquée"
+  )
+```
+
+## 4. Clustering et Projection t-SNE
+
+Identification des sous-populations de CAF par clustering.
+
+```{r clustering_tsne}
+# 1. Clustering
+caf <- FindNeighbors(caf, dims = 1:20)
+caf <- FindClusters(caf, resolution = 0.1)
+
+# Vérifier le nombre de clusters obtenus
+cat("Nombre de clusters obtenus:", length(unique(Idents(caf))), "\n")
+table(Idents(caf))
+
+# 2. t-SNE
+caf <- RunTSNE(caf, dims = 1:20)
+
+# 3. Visualisation
+DimPlot(caf, reduction = "tsne", label = TRUE) +
+  ggtitle("Projection t-SNE des Sous-Populations de CAF")
+```
+
+## 5. Caractérisation des Sous-Populations
+
+### 5.1 Identification des Marqueurs (DEG)
+
+```{r find_markers}
+# Identification des marqueurs pour chaque cluster
+markers <- FindAllMarkers(caf, only.pos = TRUE)
+
+# Afficher les premiers marqueurs
+head(markers)
+
+# Top 5 marqueurs par cluster
+top5_markers <- markers %>%
     group_by(cluster) %>%
     slice_max(n = 5, order_by = avg_log2FC)
 
 print("--- Top 5 Marqueurs par Cluster ---")
 print(top5_markers)
-
-top10_genes <- caf.markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
-DoHeatmap(caf, features = top10_genes$gene, size = 3) + NoLegend()
 ```
 
-### 4.2 Enrichissement GO
+```{r heatmap_markers}
+# Heatmap des top 10 gènes par cluster
+top10_genes <- markers %>% 
+  group_by(cluster) %>% 
+  top_n(n = 10, wt = avg_log2FC)
 
-*(Inclure analyse avec clusterProfiler si nécessaire)*
+DoHeatmap(caf, features = top10_genes$gene) + NoLegend()
+```
 
-## 5. Prédiction de l'Origine Cellulaire
+### 5.2 Enrichissement GO
+
+```{r go_enrichment, eval=FALSE}
+# Exemple : Enrichissement GO pour le cluster 0
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+genes_c0 <- markers %>% filter(cluster == 0) %>% pull(gene)
+
+ego <- enrichGO(
+  gene = genes_c0,
+  OrgDb = org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "BP",
+  pAdjustMethod = "BH",
+  readable = TRUE
+)
+
+head(ego)
+dotplot(ego)
+```
+
+## 6. Prédiction de l'Origine Cellulaire
+
+Utilisation de signatures géniques pour prédire l'origine des sous-populations de CAF.
 
 ```{r origin_prediction}
-signatures <- list(
-    VSMC = c("PLN", "SORBS2", "PHLDA2", "SNCG", "MT1M", "MYH11"),
-    HSC = c("FABP5", "HIGD1B", "AGT", "RGSS", "CPE", "SSTR2"),
-    SAMes = c("LUM", "PTGDS", "DCN", "COL1A1", "FBLN1", "LTBP2")
-)
+# Signatures d'origine des CAF
+vsmc <- c("PLN", "SORBS2", "PHLDA2", "SNCG", "MT1M", "MYH11")
+hsc <- c("FABP5", "HIGD1B", "AGT", "RGS5", "CPE", "SSTR2")
+sames <- c("LUM", "PTGDS", "DCN", "COL1A1", "FBLN1", "LTBP2")
 
-signature_scores <- data.frame(
-    Cluster = levels(caf),
-    VSMC_Score = 0,
-    HSC_Score = 0,
-    SAMes_Score = 0
-)
+# Visualisation des signatures
+FeaturePlot(caf, features = vsmc) +
+  ggtitle("Signature VSMC (Vascular Smooth Muscle Cells)")
 
-for (cluster_id in levels(caf)) {
-    cells_in_cluster <- WhichCells(caf, ident = cluster_id)
+FeaturePlot(caf, features = hsc) +
+  ggtitle("Signature HSC (Hepatic Stellate Cells)")
 
-    current_VSMC_genes <- intersect(signatures$VSMC, rownames(caf))
-    current_HSC_genes <- intersect(signatures$HSC, rownames(caf))
-    current_SAMes_genes <- intersect(signatures$SAMes, rownames(caf))
-
-    signature_scores[signature_scores$Cluster == cluster_id, "VSMC_Score"] <- mean(caf@assays$RNA@data[current_VSMC_genes, cells_in_cluster])
-    signature_scores[signature_scores$Cluster == cluster_id, "HSC_Score"] <- mean(caf@assays$RNA@data[current_HSC_genes, cells_in_cluster])
-    signature_scores[signature_scores$Cluster == cluster_id, "SAMes_Score"] <- mean(caf@assays$RNA@data[current_SAMes_genes, cells_in_cluster])
-}
-
-print("--- Scores d'Expression des Signatures d'Origine ---")
-print(signature_scores)
+FeaturePlot(caf, features = sames) +
+  ggtitle("Signature SAMes (Stromal Adipocyte Mesenchymal)")
 ```
 
-## 6. Conclusion
+## 7. Conclusion
