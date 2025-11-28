@@ -41,24 +41,46 @@ caf <- subset(
 )
 
 ### --- 3. Normalisation & PCA ----
+### --- Normalisation, HVG, scaling, PCA ----
 caf <- NormalizeData(caf)
 caf <- FindVariableFeatures(caf)
 caf <- ScaleData(caf)
 caf <- RunPCA(caf)
 
+### --- ElbowPlot classique (Seurat)
 ElbowPlot(caf)
 
-### --- 4. Clustering (objectif : 3 clusters) ----
+### --- ElbowPlot personnalisé AVEC LIGNE ----
+# Extraire la variance expliquée
+var_explained <- caf[["pca"]]@stdev^2
+percent_var <- var_explained / sum(var_explained) * 100
+
+# Prendre les 30 premiers PCs
+df_elbow <- data.frame(
+  PC = 1:30,
+  Variance = percent_var[1:30]
+)
+
+# Graphe avec points + ligne
+library(ggplot2)
+
+ggplot(df_elbow, aes(x = PC, y = Variance)) +
+  geom_point(size = 3) +
+  geom_line(size = 1) +
+  theme_minimal() +
+  labs(
+    title = "Elbow Plot (avec ligne)",
+    x = "Composante Principale",
+    y = "% variance expliquée"
+  )
+
+
+### --- 4. Clustering (objectif : 4 clusters) ----
 caf <- FindNeighbors(caf, dims=1:20)
-caf <- FindClusters(caf, resolution=0.6)  
+caf <- FindClusters(caf, resolution = 0.1)
 table(Idents(caf))
 
-caf <- RunTSNE(caf, dims=1:20)
-DimPlot(caf, reduction="tsne", label=TRUE)
 
-### --- 5. Marqueurs par cluster ----
-markers <- FindAllMarkers(caf, only.pos=TRUE)
-head(markers)
 
 ### --- 6. t-SNE ----
 caf <- RunTSNE(caf, dims=1:20)
