@@ -1,0 +1,26 @@
+library(dplyr)
+library(Seurat)
+# parallel computation and memory allocation for Seurat
+library(future)
+plan(sequential)
+options(future.globals.maxSize=10*1024**3)
+p5 <- read.csv("CAFs/GSM4805570_CountsMatrix_20G00953M_TN.txt.gz",
+               sep="\t")
+p4a <- read.csv("CAFs/GSM4805566_CountsMatrix_19G02977A_TN.txt.gz",
+                sep="\t")
+p4b <- read.csv("CAFs/GSM4805568_CountsMatrix_19G02977B_TN.txt.gz",
+                sep="\t")
+caf.data <- data.matrix(cbind(p5,p4a,p4b))
+ens <- read.csv("ensembl-38-108-genes.txt", sep="\t")
+ens2symb <- setNames(ens$Gene.name, ens$Gene.stable.ID)
+ens2type <- setNames(ens$Gene.type, ens$Gene.stable.ID)
+symbols <- ens2symb[rownames(caf.data)]
+types <- ens2type[rownames(caf.data)]
+good <- types=="protein_coding" & !is.na(symbols) & !duplicated(symbols)
+sum(good)
+symb <- symbols[good]
+caf.data <- caf.data[good,]
+rownames(caf.data) <- symb
+caf <- CreateSeuratObject(counts=caf.data, project="cafs",
+                          min.cells=0.01*ncol(caf.data), min.features=1000)
+caf
