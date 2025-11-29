@@ -1,21 +1,31 @@
 ---
 title: "Projet 1 : Analyse scRNA-seq des Fibroblastes Associés au Cancer (CAF) de CRC-LM"
-author: "Votre Nom / Groupe"
+author: "Tara Guillorit & Najat Amoukou / Groupe"
 date: "`r Sys.Date()`"
 output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
   html_document:
     toc: true
     toc_float: true
-    toc_depth: 3
     code_folding: show
     number_sections: true
-    theme: cosmo
-    highlight: tango
 ---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center"
+)
+```
 
 # Introduction et Objectifs
 
-Ce rapport présente l'analyse des transcriptomes unicellulaires des **Fibroblastes Associés au Cancer (CAF)** isolés de métastases hépatiques colorectales (CRC-LM). Les CAF jouent un rôle crucial en stimulant la croissance tumorale et en induisant une réaction desmoplastique.
+Ce rapport présente l'analyse des transcriptomes unicellulaires des **Fibroblastes Associés au Cancer (CAF)** isolés de métastases hépatiques colorectales (CRC-LM).
 
 **Objectifs principaux :**
 
@@ -24,15 +34,11 @@ Ce rapport présente l'analyse des transcriptomes unicellulaires des **Fibroblas
 3. Analyser l'enrichissement fonctionnel (Gene Ontology)
 4. Prédire l'origine cellulaire des différentes sous-populations
 
-**Données :** Transcriptomes de trois échantillons de CAF provenant de métastases hépatiques colorectales.
-
 ---
 
-## 1. Préparation de l'Environnement et Chargement des Données
+# Chargement des Données et Préparation
 
-Cette section initialise l'environnement R, charge les bibliothèques Seurat et future, et combine les matrices de comptes des trois échantillons.
-
-```{r loading_data, message=FALSE, warning=FALSE}
+```{r loading_data}
 # -------------------------------
 # 1. Librairies et options
 # -------------------------------
@@ -40,12 +46,13 @@ library(dplyr)
 library(Seurat)
 library(future)
 library(ggplot2)
-library(clusterProfiler)
-library(org.Hs.eg.db)
+library(clusterProfiler) 
+library(org.Hs.eg.db)     
+library(gridExtra)
 
 # Options pour le calcul parallèle
-plan(sequential)
-options(future.globals.maxSize = 10 * 1024**3)  # 10 Go max
+plan("multicore", workers = 8)
+options(future.globals.maxSize=10*1024**3)
 
 # -------------------------------
 # 2. Chargement des données
@@ -54,10 +61,8 @@ p5 <- read.csv("CAFs/GSM4805570_CountsMatrix_20G00953M_TN.txt.gz", sep="\t")
 p4a <- read.csv("CAFs/GSM4805566_CountsMatrix_19G02977A_TN.txt.gz", sep="\t")
 p4b <- read.csv("CAFs/GSM4805568_CountsMatrix_19G02977B_TN.txt.gz", sep="\t")
 
-# Combinaison et conversion en matrice
 caf.data <- data.matrix(cbind(p5, p4a, p4b))
 
-# Mappage des identifiants Ensembl vers les symboles de gènes
 ens <- read.csv("ensembl-38-108-genes.txt", sep="\t")
 ens2symb <- setNames(ens$Gene.name, ens$Gene.stable.ID)
 ens2type <- setNames(ens$Gene.type, ens$Gene.stable.ID)
@@ -66,55 +71,30 @@ symbols <- ens2symb[rownames(caf.data)]
 types <- ens2type[rownames(caf.data)]
 
 # Filtrage des gènes codants uniques
-good <- types == "protein_coding" & !is.na(symbols) & !duplicated(symbols)
+good <- types=="protein_coding" & !is.na(symbols) & !duplicated(symbols)
 caf.data <- caf.data[good,]
 rownames(caf.data) <- symbols[good]
-
-cat("Dimensions de la matrice après filtrage:", dim(caf.data), "\n")
-cat("Nombre de gènes:", nrow(caf.data), "\n")
-cat("Nombre de cellules:", ncol(caf.data), "\n")
 ```
 
-**Résumé :** Les données de trois échantillons ont été chargées et fusionnées. Les gènes codant pour des protéines ont été sélectionnés et les doublons éliminés.
-
-## 2. Création de l'Objet Seurat et Contrôle Qualité (QC)
-
-### 2.1 Création de l'objet Seurat
+# Création de l'Objet Seurat et Contrôle Qualité
 
 ```{r create_seurat}
 # -------------------------------
 # 3. Création de l'objet Seurat
 # -------------------------------
-caf <- CreateSeuratObject(
-  counts = caf.data, 
-  project = "cafs",
-  min.cells = 0.01 * ncol(caf.data), 
-  min.features = 1000
-)
+caf <- CreateSeuratObject(counts=caf.data, project="cafs",
+                          min.cells=0.01*ncol(caf.data), min.features=1000)
 
-print("Objet Seurat créé (avant QC):")
-caf
-```
-
-### 2.2 Contrôle qualité et filtrage
-
-```{r qc_filtering, fig.width=12, fig.height=5}
 # Pourcentage de gènes mitochondriaux
-caf[["percent.mt"]] <- PercentageFeatureSet(caf, pattern = "^MT-")
+caf[["percent.mt"]] <- PercentageFeatureSet(caf, pattern="^MT-")
 
 # Vérification de la qualité des cellules
-VlnPlot(caf, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"))
+VlnPlot(caf, features=c("nFeature_RNA","nCount_RNA","percent.mt"))
 
 # Filtrage des cellules
-caf <- subset(
-  caf, 
-  subset = nFeature_RNA > 1000 &
-           nCount_RNA < 50000 &
-           percent.mt < 50
-)
-
-print("Objet Seurat après QC:")
-caf
+caf <- subset(caf, subset = nFeature_RNA > 1000 &
+                          nCount_RNA < 50000 &
+                          percent.mt < 50)
 ```
 
 **Critères de filtrage :**
@@ -123,11 +103,9 @@ caf
 - `nCount_RNA < 50000` : Élimination des potentiels doublets
 - `percent.mt < 50` : Élimination des cellules avec trop de gènes mitochondriaux (cellules mortes)
 
-## 3. Normalisation, PCA et Visualisation
+# Normalisation et PCA
 
-### 3.1 Normalisation et analyse en composantes principales
-
-```{r normalization_pca, fig.width=8, fig.height=6}
+```{r normalization_pca}
 # -------------------------------
 # 4. Normalisation et PCA
 # -------------------------------
@@ -137,123 +115,67 @@ caf <- ScaleData(caf)
 caf <- RunPCA(caf)
 
 # Elbow plot classique
-ElbowPlot(caf, ndims = 30) + 
-  ggtitle("Elbow Plot - Variance expliquée par composante")
-```
+ElbowPlot(caf)
 
-### 3.2 Elbow Plot personnalisé
-
-```{r elbow_plot_custom, fig.width=10, fig.height=6}
-# Elbow plot personnalisé avec ligne
+# Elbow plot personnalisé
 var_explained <- caf[["pca"]]@stdev^2
 percent_var <- var_explained / sum(var_explained) * 100
 
 df_elbow <- data.frame(PC = 1:30, Variance = percent_var[1:30])
 
 ggplot(df_elbow, aes(x = PC, y = Variance)) +
-  geom_point(size = 3, color = "steelblue") +
-  geom_line(size = 1, color = "steelblue") +
-  geom_vline(xintercept = 20, linetype = "dashed", color = "red", size = 0.8) +
+  geom_point(size = 3) +
+  geom_line(size = 1) +
   theme_minimal() +
-  labs(
-    title = "Elbow Plot (avec ligne)",
-    x = "Composante Principale",
-    y = "% variance expliquée",
-    caption = "La ligne rouge indique le nombre de PCs utilisés (20)"
-  ) +
-  theme(
-    plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
-    axis.title = element_text(size = 12)
-  )
+  labs(title = "Elbow Plot (avec ligne)", 
+       x = "Composante Principale", 
+       y = "% variance expliquée")
 ```
 
-**Interprétation :** Les 20 premières composantes principales capturent la majorité de la variance. Elles seront utilisées pour le clustering.
+**Interprétation :** Les 20 premières composantes principales capturent la majorité de la variance.
 
-## 4. Clustering et Projection t-SNE
+# Clustering et t-SNE
 
-### 4.1 Clustering des cellules
-
-```{r clustering}
+```{r clustering_tsne}
 # -------------------------------
-# 5. Clustering
+# 5. Clustering (objectif : 4 clusters)
 # -------------------------------
-caf <- FindNeighbors(caf, dims = 1:20)
+caf <- FindNeighbors(caf, dims=1:20)
 caf <- FindClusters(caf, resolution = 0.1)
-
-# Vérifier le nombre de clusters obtenus
-cat("Nombre de clusters obtenus:", length(unique(Idents(caf))), "\n\n")
-cat("Distribution des cellules par cluster:\n")
 table(Idents(caf))
-```
 
-### 4.2 Projection t-SNE
-
-```{r tsne, fig.width=10, fig.height=8}
 # -------------------------------
 # 6. t-SNE
 # -------------------------------
-caf <- RunTSNE(caf, dims = 1:20)
-
-# Visualisation avec labels
-DimPlot(caf, reduction = "tsne", label = TRUE, label.size = 6, pt.size = 1) +
-  ggtitle("Projection t-SNE des Sous-Populations de CAF") +
-  theme(
-    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
-    legend.position = "right"
-  )
+caf <- RunTSNE(caf, dims=1:20)
+DimPlot(caf, reduction="tsne", label=TRUE)
 ```
 
+# Identification des Marqueurs
 
-## 5. Caractérisation des Sous-Populations
-
-### 5.1 Identification des Marqueurs (DEG)
-
-```{r find_markers, warning=FALSE}
+```{r find_markers}
 # -------------------------------
 # 7. Marqueurs
 # -------------------------------
 markers <- FindAllMarkers(caf, only.pos = TRUE)
-
-# Afficher un aperçu
-cat("Aperçu des marqueurs identifiés:\n")
 head(markers, 10)
-```
 
-### 5.2 Top marqueurs par cluster
-
-```{r top_markers}
 # Top 5 marqueurs par cluster
 top5_markers <- markers %>%
   group_by(cluster) %>%
   slice_max(n = 5, order_by = avg_log2FC)
 
-print("=== Top 5 Marqueurs par Cluster ===")
 print(top5_markers)
 ```
 
-### 5.3 Heatmap des marqueurs
+# Enrichissement GO
 
-```{r heatmap_markers, fig.width=12, fig.height=10}
-# Heatmap des top 10 gènes par cluster
-top10_genes <- markers %>% 
-  group_by(cluster) %>% 
-  top_n(n = 10, wt = avg_log2FC)
-
-DoHeatmap(caf, features = top10_genes$gene, size = 4) + 
-  scale_fill_gradientn(colors = c("blue", "white", "red")) +
-  theme(axis.text.y = element_text(size = 8))
-```
-
-**Interprétation :** Les marqueurs différentiels permettent de caractériser chaque sous-population et d'identifier leurs spécificités transcriptomiques.
-
-### 5.4 Enrichissement GO pour tous les clusters
-
-```{r go_enrichment_all, warning=FALSE, message=FALSE, fig.width=14, fig.height=12}
+```{r go_enrichment}
 # -------------------------------
 # 8. Enrichissement GO pour tous les clusters
 # -------------------------------
 ego_list <- list()
-clusters <- unique(markers$cluster)  # Utiliser tous les clusters détectés
+clusters <- 0:3  # 4 clusters
 
 for (clust in clusters) {
   genes <- markers %>% filter(cluster == clust) %>% pull(gene)
@@ -271,31 +193,17 @@ for (clust in clusters) {
 }
 
 # Affichage des dotplots pour tous les clusters
-if (!requireNamespace("gridExtra", quietly = TRUE)) install.packages("gridExtra")
-library(gridExtra)
-
 plots <- list()
-for (i in seq_along(clusters)) {
-  clust <- clusters[i]
-  if (!is.null(ego_list[[paste0("cluster", clust)]]) && nrow(ego_list[[paste0("cluster", clust)]]) > 0) {
-    p <- dotplot(ego_list[[paste0("cluster", clust)]], showCategory = 10) +
-         ggtitle(paste("Enrichissement GO - Cluster", clust)) +
-         theme(plot.title = element_text(hjust = 0.5, face = "bold"))
-    plots[[i]] <- p
-  }
+for (clust in 0:3) {
+  p <- dotplot(ego_list[[paste0("cluster", clust)]]) +
+       ggplot2::ggtitle(paste("Enrichissement GO - Cluster", clust))
+  plots[[clust + 1]] <- p
 }
 
-# Afficher tous les plots
-if (length(plots) > 0) {
-  grid.arrange(grobs = plots, ncol = 2)
-}
+grid.arrange(grobs = plots, ncol = 2, nrow = 2)
 ```
 
-**Analyse fonctionnelle :** L'enrichissement GO révèle les processus biologiques enrichis dans chaque cluster, permettant d'identifier leurs rôles fonctionnels.
-
-## 6. Prédiction de l'Origine Cellulaire
-
-### 6.1 Signatures géniques des origines cellulaires
+# Signatures d'Origine des CAF
 
 Les CAF peuvent provenir de différentes sources cellulaires :
 
@@ -303,130 +211,44 @@ Les CAF peuvent provenir de différentes sources cellulaires :
 - **HSC** (Hepatic Stellate Cells) : Cellules stellaires hépatiques
 - **SAMes** (Stromal Adipocyte Mesenchymal) : Cellules mésenchymateuses stromales
 
-```{r origin_prediction, fig.width=12, fig.height=10}
+```{r signatures}
 # -------------------------------
 # 9. Signatures d'origine des CAF
 # -------------------------------
-vsmc <- c("PLN", "SORBS2", "PHLDA2", "SNCG", "MT1M", "MYH11")
-hsc <- c("FABP5", "HIGD1B", "AGT", "RGS5", "CPE", "SSTR2")
-sames <- c("LUM", "PTGDS", "DCN", "COL1A1", "FBLN1", "LTBP2")
+vsmc  <- c("PLN","SORBS2","PHLDA2","SNCG","MT1M","MYH11")
+hsc   <- c("FABP5","HIGD1B","AGT","RGS5","CPE","SSTR2")
+sames <- c("LUM","PTGDS","DCN","COL1A1","FBLN1","LTBP2")
 
-# Visualisation des signatures VSMC
-FeaturePlot(caf, features = vsmc, ncol = 3) +
-  plot_annotation(title = "Signature VSMC (Vascular Smooth Muscle Cells)",
-                  theme = theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14)))
+FeaturePlot(caf, features=vsmc)
+FeaturePlot(caf, features=hsc)
+FeaturePlot(caf, features=sames)
 ```
 
-```{r signature_hsc, fig.width=12, fig.height=10}
-# Visualisation des signatures HSC
-FeaturePlot(caf, features = hsc, ncol = 3) +
-  plot_annotation(title = "Signature HSC (Hepatic Stellate Cells)",
-                  theme = theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14)))
-```
+# Tableau Récapitulatif
 
-```{r signature_sames, fig.width=12, fig.height=10}
-# Visualisation des signatures SAMes
-FeaturePlot(caf, features = sames, ncol = 3) +
-  plot_annotation(title = "Signature SAMes (Stromal Adipocyte Mesenchymal)",
-                  theme = theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14)))
-```
-
-### 6.2 Scores d'expression moyens par cluster
-
-```{r signature_scores}
-# Calcul des scores moyens pour chaque signature
-clusters_ids <- levels(Idents(caf))
-
-signature_scores <- data.frame(
-  Cluster = clusters_ids,
-  VSMC_Score = 0,
-  HSC_Score = 0,
-  SAMes_Score = 0
-)
-
-for (i in seq_along(clusters_ids)) {
-  cluster_id <- clusters_ids[i]
-  cells_in_cluster <- WhichCells(caf, idents = cluster_id)
-  
-  # Calculer les scores moyens
-  vsmc_present <- intersect(vsmc, rownames(caf))
-  hsc_present <- intersect(hsc, rownames(caf))
-  sames_present <- intersect(sames, rownames(caf))
-  
-  if (length(vsmc_present) > 0) {
-    signature_scores[i, "VSMC_Score"] <- mean(GetAssayData(caf, slot = "data")[vsmc_present, cells_in_cluster])
-  }
-  if (length(hsc_present) > 0) {
-    signature_scores[i, "HSC_Score"] <- mean(GetAssayData(caf, slot = "data")[hsc_present, cells_in_cluster])
-  }
-  if (length(sames_present) > 0) {
-    signature_scores[i, "SAMes_Score"] <- mean(GetAssayData(caf, slot = "data")[sames_present, cells_in_cluster])
-  }
-}
-
-print("=== Scores d'expression des signatures par cluster ===")
-print(signature_scores)
-
-# Déterminer l'origine prédite pour chaque cluster
-signature_scores$Origine_Predite <- apply(signature_scores[, c("VSMC_Score", "HSC_Score", "SAMes_Score")], 1, function(x) {
-  c("VSMC", "HSC", "SAMes")[which.max(x)]
-})
-
-print("\n=== Origine prédite pour chaque cluster ===")
-print(signature_scores[, c("Cluster", "Origine_Predite")])
-```
-
-## 7. Tableau Récapitulatif et Conclusions
-
-### 7.1 Tableau de synthèse des sous-populations
-
-```{r summary_table}
+```{r summary}
 # -------------------------------
-# 10. Tableau résumé
+# 10. Tableau résumé simple
 # -------------------------------
-# Ce tableau doit être rempli selon vos observations des FeaturePlots et des marqueurs
-
-summary_table <- data.frame(
-  Cluster = clusters_ids,
-  Nombre_Cellules = as.numeric(table(Idents(caf))),
-  Top_Marqueur = sapply(clusters_ids, function(x) {
-    top_gene <- markers %>% filter(cluster == x) %>% slice_max(order_by = avg_log2FC, n = 1) %>% pull(gene)
-    if (length(top_gene) > 0) return(top_gene[1]) else return("N/A")
-  }),
-  Origine_Probable = signature_scores$Origine_Predite,
-  Fonction_Principale = c(
-    # À REMPLIR selon l'analyse GO et les marqueurs
-    "À déterminer selon enrichissement GO",
-    "À déterminer selon enrichissement GO",
-    "À déterminer selon enrichissement GO",
-    "À déterminer selon enrichissement GO"
-  )[1:length(clusters_ids)]
-)
-
-print("=== TABLEAU RÉCAPITULATIF DES SOUS-POPULATIONS DE CAF ===")
-knitr::kable(summary_table, caption = "Caractérisation des sous-populations de CAF")
-```
-
-### 7.2 Visualisation finale avec annotations
-
-```{r final_plot, fig.width=12, fig.height=8}
-# Plot t-SNE avec les origines prédites
-# Créer un vecteur d'annotations
-cluster_origins <- setNames(signature_scores$Origine_Predite, signature_scores$Cluster)
-
-DimPlot(caf, reduction = "tsne", label = TRUE, label.size = 5, pt.size = 1.2) +
-  ggtitle("Sous-Populations de CAF avec Origines Prédites") +
-  theme(
-    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
-    legend.position = "right"
+summary_simple <- data.frame(
+  cluster = 0:3,
+  source_probable = c("VSMC", "HSC", "CAF commun", "VSMC"),  # à remplir selon FeaturePlot
+  fonction_principale = c(
+    "Matrice extracellulaire / adhésion", 
+    "Métabolisme lipidique", 
+    "Remodelage ECM / angiogenèse", 
+    "Contraction musculaire"
   )
+)
+
+knitr::kable(summary_simple, caption = "Caractérisation des sous-populations de CAF")
 ```
 
-## 8. Conclusions
+# Conclusions
 
-### Résumé des résultats :
+## Résumé des résultats :
 
-1. **Nombre de sous-populations identifiées :** `r length(unique(Idents(caf)))` clusters distincts
+1. **Nombre de sous-populations identifiées :** 4 clusters distincts
 
 2. **Caractéristiques principales :**
    - Chaque cluster présente des marqueurs spécifiques
@@ -443,16 +265,6 @@ DimPlot(caf, reduction = "tsne", label = TRUE, label.size = 5, pt.size = 1.2) +
    - Contribution différentielle au microenvironnement tumoral
    - Cibles thérapeutiques potentielles selon les sous-populations
 
-### Perspectives :
-
-- Validation expérimentale des marqueurs identifiés
-- Analyse de l'interaction entre sous-populations
-- Étude de l'impact pronostique des différentes sous-populations
-
 ---
 
 **Date de l'analyse :** `r Sys.Date()`
-
-**Références :**
-- Butler et al. (2018). Integrating single-cell transcriptomic data across different conditions, technologies, and species. *Nature Biotechnology*
-- Stuart et al. (2019). Comprehensive Integration of Single-Cell Data. *Cell*
