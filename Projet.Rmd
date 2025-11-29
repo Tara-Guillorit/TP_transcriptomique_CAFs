@@ -77,18 +77,24 @@ Cette analyse transcriptomique unicellulaire (scRNA-seq) vise à :
 # -------------------------------
 # Chargement des librairies
 # -------------------------------
-library(dplyr)
-library(Seurat)
-library(future)
-library(ggplot2)
-library(clusterProfiler) 
-library(org.Hs.eg.db)     
-library(gridExtra)
-library(knitr)
-library(kableExtra)
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(Seurat)
+  library(future)
+  library(ggplot2)
+  library(clusterProfiler) 
+  library(org.Hs.eg.db)     
+  library(gridExtra)
+  library(knitr)
+})
+
+# Chargement de kableExtra avec gestion des warnings
+suppressWarnings({
+  library(kableExtra)
+})
 
 # Configuration du calcul parallèle
-plan("multicore", workers = 8)
+plan("multicore", workers = 18)
 options(future.globals.maxSize=10*1024**3)
 
 # -------------------------------
@@ -142,7 +148,7 @@ caf[["percent.mt"]] <- PercentageFeatureSet(caf, pattern="^MT-")
 n_cells_before <- ncol(caf)
 ```
 
-```{r qc_plots, fig.height=5, fig.cap="Distribution des métriques de contrôle qualité. De gauche à droite : nombre de gènes détectés par cellule (nFeature_RNA), nombre total d'UMIs par cellule (nCount_RNA), et pourcentage de gènes mitochondriaux."}
+```{r qc_plots, fig.height=5, fig.cap="Distribution des métriques de contrôle qualité. De gauche à droite : nombre de gènes détectés par cellule (nFeature_RNA), nombre total d'UMIs par cellule (nCount_RNA), et proportion de gènes mitochondriaux."}
 # Visualisation des métriques QC
 VlnPlot(caf, features=c("nFeature_RNA","nCount_RNA","percent.mt"), 
         pt.size=0.1, ncol=3) +
@@ -171,9 +177,9 @@ retention_rate <- round(n_cells_after / n_cells_before * 100, 1)
 
 - Cellules avant filtrage : `r n_cells_before`
 - Cellules après filtrage : `r n_cells_after`
-- Taux de rétention : **`r retention_rate`%**
+- Taux de rétention : **`r retention_rate` %**
 
-**Interprétation :** Le taux de rétention de `r retention_rate`% indique une bonne qualité générale du dataset. Les cellules éliminées présentaient des caractéristiques incompatibles avec des cellules viables de haute qualité, potentiellement biaisantes pour les analyses en aval.
+**Interprétation :** Le taux de rétention de `r retention_rate` % indique une bonne qualité générale du dataset. Les cellules éliminées présentaient des caractéristiques incompatibles avec des cellules viables de haute qualité, potentiellement biaisantes pour les analyses en aval.
 
 \newpage
 
@@ -201,7 +207,7 @@ caf <- RunPCA(caf, features = VariableFeatures(object = caf))
 
 ## Détermination du Nombre de Composantes Principales
 
-```{r elbow_plots, fig.height=4, fig.width=10, fig.cap="Détermination du nombre optimal de composantes principales. (A) Elbow plot standard montrant la variance expliquée par chaque PC. (B) Elbow plot avec ligne de connexion montrant le pourcentage de variance expliquée."}
+```{r elbow_plots, fig.height=4, fig.width=10, fig.cap="Détermination du nombre optimal de composantes principales. (A) Elbow plot standard montrant la variance expliquée par chaque PC. (B) Elbow plot avec ligne de connexion montrant la proportion de variance expliquée."}
 # Calcul de la variance expliquée
 var_explained <- caf[["pca"]]@stdev^2
 percent_var <- var_explained / sum(var_explained) * 100
@@ -274,8 +280,8 @@ kable(cluster_df,
 **Observations :**
 
 - **`r nrow(cluster_df)` clusters** ont été identifiés
-- Le **Cluster 0** représente la population majoritaire (`r cluster_df$Pourcentage[1]`% des cellules)
-- Le **Cluster `r nrow(cluster_df)-1`** constitue une population rare (`r cluster_df$Pourcentage[nrow(cluster_df)]`% des cellules)
+- Le **Cluster 0** représente la population majoritaire (`r cluster_df$Pourcentage[1]` % des cellules)
+- Le **Cluster `r nrow(cluster_df)-1`** constitue une population rare (`r cluster_df$Pourcentage[nrow(cluster_df)]` % des cellules)
 
 ## Visualisation t-SNE
 
@@ -323,8 +329,8 @@ top10_markers <- markers %>%
 ```{r markers_table}
 # Préparation du tableau pour l'affichage
 markers_display <- top10_markers %>%
-  select(cluster, gene, avg_log2FC, pct.1, pct.2, p_val_adj) %>%
-  mutate(
+  dplyr::select(cluster, gene, avg_log2FC, pct.1, pct.2, p_val_adj) %>%
+  dplyr::mutate(
     avg_log2FC = round(avg_log2FC, 2),
     pct.1 = round(pct.1, 2),
     pct.2 = round(pct.2, 2),
@@ -349,13 +355,13 @@ kable(markers_display,
 
 ### Cluster 0 : Phénotype VSMC (Vascular Smooth Muscle Cell-like)
 
-**Cellules :** `r cluster_df$Nombre_Cellules[1]` (`r cluster_df$Pourcentage[1]`%)
+**Cellules :** `r cluster_df$Nombre_Cellules[1]` (`r cluster_df$Pourcentage[1]` %)
 
 ```{r cluster0_markers}
 cluster0_top <- markers %>% 
   filter(cluster == 0) %>% 
   slice_max(n = 5, order_by = avg_log2FC) %>%
-  select(gene, avg_log2FC, pct.1)
+  dplyr::select(gene, avg_log2FC, pct.1)
 
 kable(cluster0_top, 
       caption = "Top 5 marqueurs du Cluster 0",
@@ -379,13 +385,13 @@ kable(cluster0_top,
 
 ### Cluster 1 : Phénotype rCAF (Resident CAF / SAMes-like)
 
-**Cellules :** `r cluster_df$Nombre_Cellules[2]` (`r cluster_df$Pourcentage[2]`%)
+**Cellules :** `r cluster_df$Nombre_Cellules[2]` (`r cluster_df$Pourcentage[2]` %)
 
 ```{r cluster1_markers}
 cluster1_top <- markers %>% 
   filter(cluster == 1) %>% 
   slice_max(n = 5, order_by = avg_log2FC) %>%
-  select(gene, avg_log2FC, pct.1)
+  dplyr::select(gene, avg_log2FC, pct.1)
 
 kable(cluster1_top, 
       caption = "Top 5 marqueurs du Cluster 1",
@@ -409,13 +415,13 @@ kable(cluster1_top,
 
 ### Cluster 2 : Phénotype iCAF (Inflammatory CAF)
 
-**Cellules :** `r cluster_df$Nombre_Cellules[3]` (`r cluster_df$Pourcentage[3]`%)
+**Cellules :** `r cluster_df$Nombre_Cellules[3]` (`r cluster_df$Pourcentage[3]` %)
 
 ```{r cluster2_markers}
 cluster2_top <- markers %>% 
   filter(cluster == 2) %>% 
   slice_max(n = 5, order_by = avg_log2FC) %>%
-  select(gene, avg_log2FC, pct.1)
+  dplyr::select(gene, avg_log2FC, pct.1)
 
 kable(cluster2_top, 
       caption = "Top 5 marqueurs du Cluster 2",
@@ -438,13 +444,13 @@ kable(cluster2_top,
 
 ### Cluster 3 : Population Problématique - Contamination Tumorale
 
-**Cellules :** `r cluster_df$Nombre_Cellules[4]` (`r cluster_df$Pourcentage[4]`%)
+**Cellules :** `r cluster_df$Nombre_Cellules[4]` (`r cluster_df$Pourcentage[4]` %)
 
 ```{r cluster3_markers}
 cluster3_top <- markers %>% 
   filter(cluster == 3) %>% 
   slice_max(n = 5, order_by = avg_log2FC) %>%
-  select(gene, avg_log2FC, pct.1)
+  dplyr::select(gene, avg_log2FC, pct.1)
 
 kable(cluster3_top, 
       caption = "Top 5 marqueurs du Cluster 3",
